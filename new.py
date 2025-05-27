@@ -17,7 +17,7 @@ except ImportError:
     HAS_NEW_OPENAI = False
 
 # Page configuration
-st.set_page_config(page_title="CSV Data Chat", layout="wide")
+st.set_page_config(page_title="Data Chat", layout="wide")
 
 # Initialize OpenAI API - ROBUST VERSION that handles different client versions
 def get_openai_client(api_key):
@@ -76,10 +76,7 @@ def get_openai_client(api_key):
 def get_openai_api():
     api_key = os.environ.get("OPENAI_API_KEY", "")
     if not api_key:
-        try:
-            api_key = st.secrets["OPENAI_API_KEY"]
-        except:
-            api_key = st.sidebar.text_input("Enter OpenAI API Key:", type="password")
+        api_key = st.sidebar.text_input("Enter OpenAI API Key:", type="password")
     return api_key
 
 # Load data function with upload capability
@@ -93,206 +90,105 @@ def load_csv_data(uploaded_file=None):
             return None
     
     try:
-        # Check various possible locations
-        for filepath in ["data.csv", "dataset.csv", "../data.csv", "data/data.csv"]:
-            if os.path.exists(filepath):
-                return pd.read_csv(filepath)
-        return None
+        # Check if there's any default CSV in the directory
+        csv_files = [f for f in os.listdir('.') if f.endswith('.csv')]
+        if csv_files:
+            return pd.read_csv(csv_files[0])
+        elif os.path.exists("data") and any(f.endswith('.csv') for f in os.listdir('data')):
+            csv_files = [f for f in os.listdir('data') if f.endswith('.csv')]
+            return pd.read_csv(os.path.join("data", csv_files[0]))
+        else:
+            return None
     except Exception as e:
         st.error(f"Error loading data: {e}")
         return None
 
-# Helper function to classify query intent
-def classify_query_intent(query):
-    """Classify the intent of the query to determine relevant context"""
-    query_lower = query.lower()
+# Function to get data context - GENERIC VERSION
+def get_data_context(df, query):
+    # Basic dataframe info
+    context = f"Dataset: {len(df)} rows, {len(df.columns)} columns\n\n"
     
-    # Define intent categories and their keywords
-    intents = {
-        'summary': ['summary', 'overview', 'describe', 'what is', 'tell me about'],
-        'statistics': ['average', 'mean', 'median', 'maximum', 'minimum', 'std', 'variance', 'count'],
-        'comparison': ['compare', 'difference', 'versus', 'vs', 'against', 'than'],
-        'correlation': ['correlation', 'relationship', 'associated', 'connection', 'related'],
-        'distribution': ['distribution', 'spread', 'range', 'histogram'],
-        'outliers': ['outlier', 'anomaly', 'unusual', 'extreme'],
-        'grouping': ['group by', 'categorize', 'segment', 'bucket'],
-        'filtering': ['filter', 'where', 'condition', 'criteria', 'matching'],
-        'ranking': ['top', 'bottom', 'highest', 'lowest', 'best', 'worst', 'rank']
-    }
-    
-    # Detect intents
-    detected_intents = []
-    for intent, keywords in intents.items():
-        if any(keyword in query_lower for keyword in keywords):
-            detected_intents.append(intent)
-    
-    return detected_intents or ['summary']  # Default to summary if no intent detected
-
-# Helper function to detect important features
-def detect_important_features(df, target_col=None):
-    """Detect important features in the dataset using simple heuristics"""
-    # If target column is specified, compute correlations
-    if target_col and target_col in df.columns and pd.api.types.is_numeric_dtype(df[target_col]):
-        numeric_cols = df.select_dtypes(include=['number']).columns
-        correlations = {}
-        for col in numeric_cols:
-            if col != target_col:
-                try:
-                    correlations[col] = abs(df[col].corr(df[target_col]))
-                except:
-                    correlations[col] = 0  # If correlation fails
-        
-        # Sort by absolute correlation
-        sorted_features = sorted(correlations.items(), key=lambda x: x[1], reverse=True)
-        return [col for col, corr in sorted_features[:5]]  # Return top 5
-    
-    # If no target, use variance as a simple importance metric
-    numeric_cols = df.select_dtypes(include=['number']).columns
-    variances = {}
-    for col in numeric_cols:
-        # Normalize by mean to make it comparable across features
-        try:
-            if df[col].mean() != 0:
-                variances[col] = df[col].std() / abs(df[col].mean())
-            else:
-                variances[col] = df[col].std()
-        except:
-            variances[col] = 0  # If calculation fails
-    
-    # Sort by variance
-    sorted_features = sorted(variances.items(), key=lambda x: x[1], reverse=True)
-    return [col for col, var in sorted_features[:5]]  # Return top 5
-
-# NEW FLEXIBLE PREPROCESSING FUNCTION
-def get_data_context(df, query, max_context_length=4000):
-    """Generate flexible context based on dataset and query"""
-    # 1. Analyze dataset structure
-    data_info = {
-        "row_count": len(df),
-        "column_count": len(df.columns),
-        "numeric_columns": df.select_dtypes(include=['number']).columns.tolist(),
-        "categorical_columns": df.select_dtypes(include=['object', 'category']).columns.tolist(),
-        "datetime_columns": df.select_dtypes(include=['datetime64']).columns.tolist(),
-        "missing_values": df.isna().sum().sum(),
-        "duplicate_rows": df.duplicated().sum()
-    }
-    
-    # 2. Analyze query intent
-    intents = classify_query_intent(query)
-    
-    # 3. Identify mentioned columns
-    mentioned_cols = []
+    # Add columns info
+    context += "Columns in dataset:\n"
     for col in df.columns:
-        col_variations = [col.lower(), col.lower().replace('_', ' ')]
-        if any(variation in query.lower() for variation in col_variations):
+        context += f"- {col} ({df[col].dtype})\n"
+    
+    # Get basic stats for numeric columns
+    numeric_cols = df.select_dtypes(include=['number']).columns.tolist()
+    if numeric_cols:
+        context += "\nSummary statistics for numeric columns:\n"
+        # Get at most 5 numeric columns to avoid overwhelming the context
+        for col in numeric_cols[:5]:
+            context += f"{col} - mean: {df[col].mean():.2f}, min: {df[col].min():.2f}, max: {df[col].max():.2f}\n"
+        
+        if len(numeric_cols) > 5:
+            context += f"...and {len(numeric_cols) - 5} more numeric columns\n"
+    
+    # Get basic stats for categorical columns
+    categorical_cols = df.select_dtypes(include=['object', 'category']).columns.tolist()
+    if categorical_cols:
+        context += "\nMost common values for categorical columns:\n"
+        # Get at most 3 categorical columns to avoid overwhelming the context
+        for col in categorical_cols[:3]:
+            # Get top 3 most common values
+            value_counts = df[col].value_counts().head(3)
+            context += f"{col} - "
+            for val, count in value_counts.items():
+                percent = count / len(df) * 100
+                context += f"{val}: {count} ({percent:.1f}%), "
+            context = context.rstrip(", ") + "\n"
+        
+        if len(categorical_cols) > 3:
+            context += f"...and {len(categorical_cols) - 3} more categorical columns\n"
+    
+    # Check for specific columns mentioned in query
+    query_lower = query.lower()
+    mentioned_cols = []
+    
+    for col in df.columns:
+        col_name_in_query = col.lower().replace('_', ' ') in query_lower or col.lower() in query_lower
+        if col_name_in_query:
             mentioned_cols.append(col)
     
-    # 4. If no specific columns mentioned, find important ones
-    target_cols = mentioned_cols
-    if not target_cols:
-        # Try to identify potential target columns
-        potential_targets = [col for col in df.columns if any(
-            term in col.lower() for term in ['score', 'target', 'result', 'output', 'performance', 'rating'])]
-        
-        if potential_targets:
-            # If target columns exist, find columns correlated with them
-            target = potential_targets[0]  # Use the first one
-            target_cols = detect_important_features(df, target)
-        else:
-            # Otherwise, just use columns with highest variance
-            target_cols = detect_important_features(df)
-    
-    # 5. Build context based on intents and columns
-    context = f"Dataset: {data_info['row_count']} rows, {data_info['column_count']} columns\n"
-    context += f"Column types: {len(data_info['numeric_columns'])} numeric, {len(data_info['categorical_columns'])} categorical\n"
-    context += f"Data quality: {data_info['missing_values']} missing values, {data_info['duplicate_rows']} duplicate rows\n\n"
-    
-    # Add intent-specific information
-    for intent in intents:
-        if intent == 'summary':
-            # Add dataset summary
-            context += "Dataset Summary:\n"
-            sample_cols = df.columns[:5].tolist()  # First 5 columns as sample
-            context += f"Sample columns: {', '.join(sample_cols)}\n"
-            
-        elif intent == 'statistics' or intent == 'summary':
-            # Add statistics for target columns
-            for col in target_cols:
-                if col in data_info['numeric_columns']:
-                    context += f"\n{col} statistics:\n"
-                    context += f"- Mean: {df[col].mean():.2f}\n"
-                    context += f"- Median: {df[col].median():.2f}\n"
-                    context += f"- Std Dev: {df[col].std():.2f}\n"
-                    context += f"- Min: {df[col].min():.2f}\n"
-                    context += f"- Max: {df[col].max():.2f}\n"
-                elif col in data_info['categorical_columns']:
-                    value_counts = df[col].value_counts()
-                    context += f"\n{col} categories (top 5):\n"
-                    for val, count in value_counts.head(5).items():
-                        context += f"- {val}: {count} ({count/len(df)*100:.1f}%)\n"
-                    if len(value_counts) > 5:
-                        context += f"- Plus {len(value_counts)-5} more categories\n"
-        
-        elif intent == 'correlation':
-            # Add correlation information
-            num_mentioned = [col for col in mentioned_cols if col in data_info['numeric_columns']]
-            if len(num_mentioned) >= 2:
-                # Correlations between mentioned numeric columns
-                context += "\nCorrelations between mentioned columns:\n"
-                for i, col1 in enumerate(num_mentioned):
-                    for col2 in num_mentioned[i+1:]:
-                        corr = df[col1].corr(df[col2])
-                        context += f"- {col1} and {col2}: {corr:.3f}\n"
+    if mentioned_cols:
+        context += "\nDetailed stats for columns mentioned in query:\n"
+        for col in mentioned_cols:
+            if pd.api.types.is_numeric_dtype(df[col]):
+                context += f"{col} stats:\n"
+                context += f"- Mean: {df[col].mean():.2f}\n"
+                context += f"- Median: {df[col].median():.2f}\n"
+                context += f"- Std: {df[col].std():.2f}\n"
+                context += f"- Min: {df[col].min():.2f}\n"
+                context += f"- Max: {df[col].max():.2f}\n"
             else:
-                # General top correlations
-                numeric_cols = data_info['numeric_columns']
-                if len(numeric_cols) >= 2:
-                    corr_matrix = df[numeric_cols].corr()
-                    corrs = []
-                    for i, col1 in enumerate(numeric_cols):
-                        for j, col2 in enumerate(numeric_cols):
-                            if i < j:  # Avoid duplicates and self-correlations
-                                corrs.append((col1, col2, abs(corr_matrix.loc[col1, col2])))
-                    
-                    # Sort by correlation strength and take top 5
-                    corrs.sort(key=lambda x: x[2], reverse=True)
-                    context += "\nTop correlations:\n"
-                    for col1, col2, corr_abs in corrs[:5]:
-                        corr = corr_matrix.loc[col1, col2]  # Get actual value with sign
-                        context += f"- {col1} and {col2}: {corr:.3f}\n"
-        
-        elif intent == 'distribution':
-            # Add distribution information for numeric columns
-            for col in target_cols:
-                if col in data_info['numeric_columns']:
-                    context += f"\n{col} distribution:\n"
-                    # Calculate percentiles
-                    percentiles = [10, 25, 50, 75, 90]
-                    for p in percentiles:
-                        context += f"- {p}th percentile: {df[col].quantile(p/100):.2f}\n"
-        
-        elif intent == 'grouping' and mentioned_cols:
-            # Add groupby information if categorical and numeric columns are mentioned
-            cat_cols = [col for col in mentioned_cols if col in data_info['categorical_columns']]
-            num_cols = [col for col in mentioned_cols if col in data_info['numeric_columns']]
-            
-            if cat_cols and num_cols:
-                cat_col = cat_cols[0]  # Use first categorical column
-                num_col = num_cols[0]  # Use first numeric column
-                
-                try:
-                    grouped = df.groupby(cat_col)[num_col].agg(['mean', 'count'])
-                    context += f"\n{num_col} grouped by {cat_col}:\n"
-                    for idx, row in grouped.head(5).iterrows():
-                        context += f"- {idx}: mean {row['mean']:.2f} (count: {row['count']})\n"
-                    if len(grouped) > 5:
-                        context += f"- Plus {len(grouped)-5} more groups\n"
-                except:
-                    pass  # Skip if groupby fails
+                context += f"{col} value counts (top 5):\n"
+                for val, count in df[col].value_counts().head(5).items():
+                    context += f"- {val}: {count} rows ({count/len(df)*100:.1f}%)\n"
     
-    # Ensure context doesn't exceed max length
-    if len(context) > max_context_length:
-        context = context[:max_context_length-100] + "...[truncated for brevity]"
+    # Check for relationship/correlation queries
+    if "correlation" in query_lower or "relationship" in query_lower:
+        numeric_df = df.select_dtypes(include=['number'])
+        if len(numeric_df.columns) >= 2:
+            # If specific columns are mentioned, prioritize those for correlation
+            if len(mentioned_cols) >= 2:
+                numeric_mentioned = [col for col in mentioned_cols if col in numeric_df.columns]
+                if len(numeric_mentioned) >= 2:
+                    context += "\nCorrelations between mentioned numeric columns:\n"
+                    for i, col1 in enumerate(numeric_mentioned[:-1]):
+                        for col2 in numeric_mentioned[i+1:]:
+                            if col1 in numeric_df.columns and col2 in numeric_df.columns:
+                                corr = df[col1].corr(df[col2])
+                                context += f"- {col1} and {col2}: {corr:.3f}\n"
+            else:
+                # If no specific columns or only one column mentioned, show top correlations
+                context += "\nTop 5 highest correlations between numeric columns:\n"
+                corr_matrix = numeric_df.corr().abs().unstack()
+                # Remove self-correlations
+                corr_matrix = corr_matrix[corr_matrix < 1.0]
+                # Get top 5 correlations
+                top_corr = corr_matrix.sort_values(ascending=False).head(5)
+                for (col1, col2), corr_value in top_corr.items():
+                    context += f"- {col1} and {col2}: {df[col1].corr(df[col2]):.3f}\n"
     
     return context
 
@@ -305,9 +201,9 @@ def chat_with_data(client, df, query):
         # Get relevant data context
         data_context = get_data_context(df, query)
         
-        # Prepare the system message
+        # Prepare the system message - GENERIC VERSION
         system_message = f"""You are a data analyst assistant.
-        Analyze the dataset and answer questions about it.
+        Analyze this dataset and answer questions about it.
         
         DATA CONTEXT:
         {data_context}
@@ -317,6 +213,7 @@ def chat_with_data(client, df, query):
         2. Provide insights based on the data
         3. If asked for code, use Python with pandas
         4. For visualizations, include matplotlib or seaborn code
+        5. Identify potential patterns, trends, or outliers in the data when relevant
         """
         
         # Send request to OpenAI - handle both new and legacy client
@@ -392,10 +289,73 @@ def execute_code(df, response_text):
     except Exception as e:
         return [("error", f"Error executing code: {str(e)}")]
 
+# Generate example questions based on dataset
+def generate_example_questions(df):
+    questions = []
+    
+    # Basic stats questions
+    questions.append("What's the basic summary of this dataset?")
+    
+    # Get a random numeric column for average question
+    numeric_cols = df.select_dtypes(include=['number']).columns.tolist()
+    if numeric_cols:
+        col = np.random.choice(numeric_cols)
+        questions.append(f"What's the average {col.replace('_', ' ')}?")
+    
+    # Correlation question
+    if len(numeric_cols) >= 2:
+        col1 = np.random.choice(numeric_cols)
+        col2 = np.random.choice([c for c in numeric_cols if c != col1])
+        questions.append(f"Show the correlation between {col1.replace('_', ' ')} and {col2.replace('_', ' ')}")
+    
+    # Categorical column question
+    cat_cols = df.select_dtypes(include=['object', 'category']).columns.tolist()
+    if cat_cols and numeric_cols:
+        cat_col = np.random.choice(cat_cols)
+        num_col = np.random.choice(numeric_cols)
+        questions.append(f"How does {cat_col.replace('_', ' ')} affect {num_col.replace('_', ' ')}?")
+    
+    # Add a generic trends question
+    questions.append("What interesting patterns or trends do you see in this data?")
+    
+    return questions
+
+# Generate sample data for demonstration
+def generate_sample_data():
+    # Create a generic sample dataset with various column types
+    np.random.seed(42)
+    n_samples = 100
+    
+    # Generate a variety of column types for a generic dataset
+    data = {
+        'id': [f'ID{i:03d}' for i in range(1, n_samples + 1)],
+        'numeric_value_1': np.random.normal(100, 20, n_samples),
+        'numeric_value_2': np.random.normal(50, 10, n_samples),
+        'category_1': np.random.choice(['A', 'B', 'C', 'D'], n_samples),
+        'category_2': np.random.choice(['Type1', 'Type2', 'Type3'], n_samples),
+        'date': pd.date_range(start='2023-01-01', periods=n_samples).strftime('%Y-%m-%d'),
+        'boolean_flag': np.random.choice([True, False], n_samples),
+        'percentage': np.random.uniform(0, 100, n_samples),
+        'count': np.random.randint(0, 50, n_samples)
+    }
+    
+    # Create correlations between some columns for more interesting analysis
+    correlation_factor = 0.7
+    data['correlated_to_numeric_1'] = data['numeric_value_1'] * correlation_factor + np.random.normal(0, 10, n_samples)
+    
+    # Add category-specific effects
+    for i, category in enumerate(data['category_1']):
+        if category == 'A':
+            data['numeric_value_2'][i] += 15
+        elif category == 'D':
+            data['numeric_value_2'][i] -= 10
+    
+    return pd.DataFrame(data)
+
 # Main app
 def main():
-    st.title("CSV Data Chat")
-    st.markdown("Ask questions about your CSV data using natural language")
+    st.title("Data Chat")
+    st.markdown("Ask questions about your data using natural language")
     
     # Get OpenAI API key
     api_key = get_openai_api()
@@ -405,7 +365,7 @@ def main():
     
     # File uploader for CSV
     st.sidebar.title("Data")
-    uploaded_file = st.sidebar.file_uploader("Upload your CSV file", type="csv")
+    uploaded_file = st.sidebar.file_uploader("Upload your CSV data", type="csv")
     
     # Load data - either from upload or default
     df = load_csv_data(uploaded_file)
@@ -415,35 +375,15 @@ def main():
         
         # Show expected format
         st.info("""
-        Upload any CSV file with data you want to analyze.
-        The app will work with any CSV format, regardless of the data domain.
+        Upload any CSV file with your data to get started!
+        
+        The app will automatically analyze your data and allow you to ask 
+        questions about it using natural language.
         """)
         
         # Create sample data to download
-        if st.button("Download Sample CSV"):
-            # Create a generic sample dataset
-            import numpy as np
-            
-            # Generate sample data
-            n_rows = 100
-            sample_data = pd.DataFrame({
-                'id': range(1, n_rows + 1),
-                'numeric_col_1': np.random.normal(100, 15, n_rows),
-                'numeric_col_2': np.random.normal(50, 10, n_rows),
-                'numeric_col_3': np.random.normal(25, 5, n_rows),
-                'category_1': np.random.choice(['A', 'B', 'C', 'D'], n_rows),
-                'category_2': np.random.choice(['Group 1', 'Group 2', 'Group 3'], n_rows),
-                'date_col': pd.date_range(start='2023-01-01', periods=n_rows).strftime('%Y-%m-%d'),
-                'binary_col': np.random.choice(['Yes', 'No'], n_rows)
-            })
-            
-            # Add some correlated data
-            sample_data['numeric_col_4'] = sample_data['numeric_col_1'] * 0.5 + sample_data['numeric_col_2'] * 0.3 + np.random.normal(0, 10, n_rows)
-            
-            # Add some missing values
-            for col in sample_data.columns[1:]:
-                mask = np.random.random(n_rows) < 0.05  # 5% missing values
-                sample_data.loc[mask, col] = np.nan
+        if st.button("Download Sample Data"):
+            sample_data = generate_sample_data()
             
             csv = sample_data.to_csv(index=False)
             st.download_button(
@@ -457,28 +397,35 @@ def main():
         with st.expander("Preview Data"):
             st.dataframe(df.head())
             
-            # Show basic stats
+            # Show basic stats dynamically based on data
             col1, col2 = st.columns(2)
             with col1:
-                st.metric("Rows", len(df))
-                st.metric("Columns", len(df.columns))
+                st.metric("Total Rows", len(df))
+                st.metric("Total Columns", len(df.columns))
             with col2:
-                st.metric("Missing Values", df.isna().sum().sum())
-                st.metric("Duplicate Rows", df.duplicated().sum())
+                numeric_cols = df.select_dtypes(include=['number']).columns.tolist()
+                if numeric_cols:
+                    # Show stats for the first numeric column
+                    first_num_col = numeric_cols[0]
+                    col_name = first_num_col.replace('_', ' ').title()
+                    st.metric(f"Avg {col_name}", f"{df[first_num_col].mean():.2f}")
+                    
+                    # Show stats for the second numeric column if available
+                    if len(numeric_cols) > 1:
+                        second_num_col = numeric_cols[1]
+                        col_name = second_num_col.replace('_', ' ').title()
+                        st.metric(f"Avg {col_name}", f"{df[second_num_col].mean():.2f}")
         
         # Chat interface
         st.header("Ask about the data")
         
-        # Example questions
-        st.markdown("""
-        **Example questions:**
-        - Give me a summary of this dataset
-        - What are the statistics for [column name]?
-        - Show the correlation between [column1] and [column2]
-        - What's the distribution of values in [column]?
-        - Which columns have the strongest relationship?
-        - Group the data by [categorical column] and show average [numeric column]
-        """)
+        # Generate example questions based on the dataset
+        example_questions = generate_example_questions(df)
+        
+        # Display example questions
+        st.markdown("**Example questions:**")
+        for question in example_questions:
+            st.markdown(f"- {question}")
         
         # Initialize session state for messages
         if "messages" not in st.session_state:
@@ -497,7 +444,7 @@ def main():
                         st.error(result)
         
         # Chat input
-        if prompt := st.chat_input("Ask a question about the data..."):
+        if prompt := st.chat_input("Ask a question about your data..."):
             # Add user message to chat history
             st.session_state.messages.append({"role": "user", "content": prompt})
             
