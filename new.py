@@ -202,19 +202,23 @@ def chat_with_data(client, df, query):
         data_context = get_data_context(df, query)
         
         # Prepare the system message - GENERIC VERSION
-        system_message = f"""You are a data analyst assistant.
-        Analyze this dataset and answer questions about it.
+        system_message = f"""You are a data analyst assistant for business users and executives.
+        Analyze this dataset and answer questions with clear, insightful analysis.
         
         DATA CONTEXT:
         {data_context}
         
         When answering:
-        1. Be specific with numbers and statistics
-        2. Provide insights based on the data
-        3. If asked for code, use Python with pandas
-        4. For visualizations, include matplotlib or seaborn code
-        5. Identify potential patterns, trends, or outliers in the data when relevant
-        6. IMPORTANT: The DataFrame is available as 'df' in the code environment. Use 'df' instead of 'data' in your code examples.
+        1. Provide clear, analytical insights written in plain business language
+        2. Focus on key findings, trends, and actionable information
+        3. Use specific numbers and statistics to support your points
+        4. NEVER include code in your response unless specifically requested
+        5. Present information in a concise, executive-friendly format
+        6. Use bullet points, short paragraphs, and clear summaries
+        7. If visualizations would help, describe the key insights that would be shown (rather than providing code)
+        8. Only if the user explicitly asks for code, use Python with pandas with 'df' as the DataFrame name
+        
+        Remember: Your audience is business users who need insights, not technical users who need code.
         """
         
         # Send request to OpenAI - handle both new and legacy client
@@ -296,30 +300,30 @@ def execute_code(df, response_text):
 def generate_example_questions(df):
     questions = []
     
-    # Basic stats questions
-    questions.append("What's the basic summary of this dataset?")
+    # Basic insights questions
+    questions.append("What are the key insights from this dataset?")
+    questions.append("Summarize the main patterns in this data")
     
     # Get a random numeric column for average question
     numeric_cols = df.select_dtypes(include=['number']).columns.tolist()
     if numeric_cols:
         col = np.random.choice(numeric_cols)
-        questions.append(f"What's the average {col.replace('_', ' ')}?")
+        questions.append(f"What's the trend in {col.replace('_', ' ')}?")
     
-    # Correlation question
-    if len(numeric_cols) >= 2:
-        col1 = np.random.choice(numeric_cols)
-        col2 = np.random.choice([c for c in numeric_cols if c != col1])
-        questions.append(f"Show the correlation between {col1.replace('_', ' ')} and {col2.replace('_', ' ')}")
+    # Distribution question
+    if numeric_cols:
+        col = np.random.choice(numeric_cols)
+        questions.append(f"How is {col.replace('_', ' ')} distributed?")
     
     # Categorical column question
     cat_cols = df.select_dtypes(include=['object', 'category']).columns.tolist()
     if cat_cols and numeric_cols:
         cat_col = np.random.choice(cat_cols)
         num_col = np.random.choice(numeric_cols)
-        questions.append(f"How does {cat_col.replace('_', ' ')} affect {num_col.replace('_', ' ')}?")
+        questions.append(f"How does {cat_col.replace('_', ' ')} influence {num_col.replace('_', ' ')}?")
     
-    # Add a generic trends question
-    questions.append("What interesting patterns or trends do you see in this data?")
+    # Add a generic business question
+    questions.append("What actionable insights can we derive from this data?")
     
     return questions
 
