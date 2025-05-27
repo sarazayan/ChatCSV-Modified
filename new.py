@@ -214,6 +214,7 @@ def chat_with_data(client, df, query):
         3. If asked for code, use Python with pandas
         4. For visualizations, include matplotlib or seaborn code
         5. Identify potential patterns, trends, or outliers in the data when relevant
+        6. IMPORTANT: The DataFrame is available as 'df' in the code environment. Use 'df' instead of 'data' in your code examples.
         """
         
         # Send request to OpenAI - handle both new and legacy client
@@ -268,8 +269,10 @@ def execute_code(df, response_text):
         plt.switch_backend('agg')
         
         # Set up namespace with dataframe and libraries
+        # Include both 'df' and 'data' to support both naming conventions
         namespace = {
-            'df': df, 
+            'df': df,
+            'data': df,  # Add this to support code that uses 'data' instead of 'df'
             'pd': pd, 
             'np': np, 
             'plt': plt, 
